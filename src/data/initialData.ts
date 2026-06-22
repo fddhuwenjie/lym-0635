@@ -1,4 +1,4 @@
-import { Room, Device, Meeting, InspectionTask, FaultTicket } from '@/types';
+import { Room, Device, Meeting, InspectionTask, FaultTicket, BorrowRecord } from '@/types';
 import { addDays, addHours, addMinutes, format, startOfToday, subDays } from 'date-fns';
 
 export const generateId = (): string => {
@@ -153,6 +153,8 @@ export const createInitialFaults = (): FaultTicket[] => [
   },
 ];
 
+export const createInitialBorrowRecords = (): BorrowRecord[] => [];
+
 export const createInitialData = () => ({
   rooms: createInitialRooms(),
   devices: createInitialDevices(),
@@ -160,4 +162,5 @@ export const createInitialData = () => ({
   inspections: createInitialInspections(),
   faults: createInitialFaults(),
   exportRecords: [],
+  borrowRecords: createInitialBorrowRecords(),
 });

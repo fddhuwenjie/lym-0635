@@ -7,6 +7,7 @@ import {
   ClipboardCheck,
   AlertTriangle,
   FileBarChart,
+  ArrowRightLeft,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -17,6 +18,7 @@ const menuItems = [
   { to: '/devices', label: '设备管理', icon: MonitorCog },
   { to: '/inspections', label: '检查任务', icon: ClipboardCheck },
   { to: '/faults', label: '故障报修', icon: AlertTriangle },
+  { to: '/borrows', label: '设备借调', icon: ArrowRightLeft },
   { to: '/reports', label: '报告导出', icon: FileBarChart },
 ];
 

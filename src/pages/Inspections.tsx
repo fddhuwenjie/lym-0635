@@ -47,8 +47,10 @@ export default function InspectionsPage() {
     meetings,
     rooms,
     devices,
+    borrowRecords,
     updateInspectionCheckItem,
     completeInspection,
+    completeReturnInspection,
     createFault,
   } = useAppStore();
 
@@ -123,7 +125,11 @@ export default function InspectionsPage() {
       });
     });
 
-    const result = completeInspection(executeModal.id);
+    const isReturnInspection = executeModal.meetingId.startsWith('return-');
+    const result = isReturnInspection
+      ? completeReturnInspection(executeModal.id)
+      : completeInspection(executeModal.id);
+      
     if (!result.success) {
       setError(result.error || '提交检查失败');
       return;
@@ -204,8 +210,13 @@ export default function InspectionsPage() {
 
         <div className="divide-y divide-slate-200">
           {filteredInspections.map((inspection) => {
-            const meeting = meetings.find((m) => m.id === inspection.meetingId);
-            const room = meeting ? rooms.find((r) => r.id === meeting.roomId) : null;
+            const isReturnInspection = inspection.meetingId.startsWith('return-');
+            const borrowId = isReturnInspection ? inspection.meetingId.replace('return-', '') : null;
+            const borrow = borrowId ? borrowRecords.find((b) => b.id === borrowId) : null;
+            const meeting = isReturnInspection ? null : meetings.find((m) => m.id === inspection.meetingId);
+            const room = isReturnInspection 
+              ? borrow ? rooms.find((r) => r.id === borrow.sourceRoomId) : null
+              : meeting ? rooms.find((r) => r.id === meeting.roomId) : null;
             const expanded = expandedId === inspection.id;
             const completedCount = inspection.checkItems.filter(
               (i) => i.checked
@@ -217,7 +228,10 @@ export default function InspectionsPage() {
             return (
               <div key={inspection.id} className="overflow-hidden">
                 <div
-                  className="p-4 hover:bg-slate-50 cursor-pointer transition-colors"
+                  className={cn(
+                    'p-4 hover:bg-slate-50 cursor-pointer transition-colors',
+                    isReturnInspection && 'bg-amber-50/50'
+                  )}
                   onClick={() =>
                     setExpandedId(expanded ? null : inspection.id)
                   }
@@ -232,12 +246,19 @@ export default function InspectionsPage() {
                               ? 'text-emerald-500'
                               : inspection.status === 'failed'
                               ? 'text-rose-500'
+                              : isReturnInspection
+                              ? 'text-orange-500'
                               : 'text-amber-500'
                           )}
                         />
                         <h3 className="font-semibold text-slate-800">
-                          {meeting?.title || '未知会议'}
+                          {isReturnInspection
+                            ? `归还检查：${borrow?.deviceName || '未知设备'}`
+                            : meeting?.title || '未知会议'}
                         </h3>
+                        {isReturnInspection && (
+                          <Badge variant="warning">归还检查</Badge>
+                        )}
                         <Badge variant={getStatusVariant(inspection.status)}>
                           {INSPECTION_STATUS_LABELS[inspection.status]}
                         </Badge>
@@ -251,13 +272,17 @@ export default function InspectionsPage() {
                       <div className="flex flex-wrap gap-4 text-sm text-slate-600">
                         <span className="flex items-center gap-1.5">
                           <Clock size={14} className="text-slate-400" />
-                          {meeting
+                          {isReturnInspection
+                            ? `创建时间: ${format(parseISO(inspection.startTime), 'yyyy-MM-dd HH:mm')}`
+                            : meeting
                             ? `${format(parseISO(meeting.startTime), 'yyyy-MM-dd HH:mm')} - ${format(parseISO(meeting.endTime), 'HH:mm')}`
                             : '-'}
                         </span>
                         <span className="flex items-center gap-1.5">
                           <MapPin size={14} className="text-slate-400" />
-                          {room?.name || '-'}
+                          {isReturnInspection
+                            ? `来源: ${borrow?.sourceRoomName || '-'} → 目标: ${borrow?.targetRoomName || '-'}`
+                            : room?.name || '-'}
                         </span>
                         <span className="flex items-center gap-1.5">
                           <Users size={14} className="text-slate-400" />

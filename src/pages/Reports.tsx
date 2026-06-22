@@ -18,7 +18,7 @@ import {
   endOfMonth,
   subMonths,
 } from 'date-fns';
-import { ExportType, EXPORT_TYPE_LABELS } from '@/types';
+import { ExportType, EXPORT_TYPE_LABELS, DEVICE_TYPE_LABELS } from '@/types';
 import { cn } from '@/lib/utils';
 
 export default function ReportsPage() {
@@ -28,8 +28,10 @@ export default function ReportsPage() {
     inspections,
     faults,
     rooms,
+    borrowRecords,
     exportRecords,
     addExportRecord,
+    getFaultImpactAnalysis,
   } = useAppStore();
 
   const defaultStart = format(startOfMonth(subMonths(new Date(), 1)), 'yyyy-MM-dd');
@@ -129,6 +131,68 @@ export default function ReportsPage() {
       content += '\n';
     }
 
+    if (type === 'borrow' || type === 'comprehensive') {
+      content += '=== 设备借调报告 ===\n';
+      content +=
+        '设备名称,设备类型,来源会议室,目标会议室,关联会议,借调原因,审批人,借调时间,预计归还,实际归还,状态\n';
+      borrowRecords
+        .filter((b) => filterByTime(b.createTime))
+        .forEach((b) => {
+          const device = devices.find((d) => d.id === b.deviceId);
+          content += `"${b.deviceName}","${
+            device ? DEVICE_TYPE_LABELS[device.type] : ''
+          }","${b.sourceRoomName}","${b.targetRoomName}","${b.meetingTitle}","${
+            b.reason
+          }","${b.approver}","${format(parseISO(b.borrowStartTime), 'yyyy-MM-dd HH:mm')}","${format(
+            parseISO(b.expectedReturnTime),
+            'yyyy-MM-dd HH:mm'
+          )}","${b.actualReturnTime ? format(parseISO(b.actualReturnTime), 'yyyy-MM-dd HH:mm') : ''}","${b.status}"\n`;
+        });
+      content += '\n';
+    }
+
+    if (type === 'fault_impact' || type === 'comprehensive') {
+      content += '=== 故障影响分析报告 ===\n';
+      content +=
+        '故障ID,故障设备,故障描述,上报时间,受影响会议数,受影响会议室数,可用替代设备数\n';
+      const relevantFaults = faults.filter((f) =>
+        type === 'fault_impact' ? true : filterByTime(f.createTime)
+      );
+      relevantFaults.forEach((f) => {
+        const analysis = getFaultImpactAnalysis(f.id);
+        if (analysis) {
+          content += `"${f.id}","${analysis.deviceName}","${f.description}","${format(
+            parseISO(f.createTime),
+            'yyyy-MM-dd HH:mm'
+          )}",${analysis.affectedMeetings.length},${analysis.affectedRooms.length},${analysis.alternativeDevices.filter((d) => d.available).length}\n`;
+
+          if (analysis.affectedMeetings.length > 0) {
+            content += '\n受影响会议详情:\n';
+            content += '会议标题,会议室,时间,组织者,是否使用故障设备\n';
+            analysis.affectedMeetings.forEach((m) => {
+              content += `"${m.meetingTitle}","${m.roomName}","${format(
+                parseISO(m.startTime),
+                'yyyy-MM-dd HH:mm'
+              )} - ${format(parseISO(m.endTime), 'HH:mm')}","${m.organizer}","${
+                m.usesDevice ? '是' : '否'
+              }"\n`;
+            });
+          }
+
+          if (analysis.alternativeDevices.length > 0) {
+            content += '\n替代设备建议:\n';
+            content += '设备名称,所在会议室,设备类型,可用性\n';
+            analysis.alternativeDevices.forEach((d) => {
+              content += `"${d.deviceName}","${d.roomName}","${DEVICE_TYPE_LABELS[d.type]}","${
+                d.available ? '可用' : '占用中'
+              }"\n`;
+            });
+          }
+          content += '\n---\n\n';
+        }
+      });
+    }
+
     if (type === 'comprehensive') {
       const totalMeetings = meetings.filter((m) =>
         filterByTime(m.startTime)
@@ -143,6 +207,9 @@ export default function ReportsPage() {
       const totalInspections = inspections.filter((i) =>
         filterByTime(i.startTime)
       ).length;
+      const totalBorrows = borrowRecords.filter((b) =>
+        filterByTime(b.createTime)
+      ).length;
 
       content += '=== 统计汇总 ===\n';
       content += `统计周期:,${startTime} 至 ${endTime}\n`;
@@ -151,6 +218,7 @@ export default function ReportsPage() {
       content += `设备检查任务数:,${totalInspections}\n`;
       content += `故障上报数:,${totalFaults}\n`;
       content += `已关闭故障数:,${closedFaults}\n`;
+      content += `设备借调数:,${totalBorrows}\n`;
       content += `报告生成时间:,${format(new Date(), 'yyyy-MM-dd HH:mm:ss')}\n`;
       content += `报告操作人:,管理员\n`;
     }
@@ -183,6 +251,8 @@ export default function ReportsPage() {
     { value: 'device_usage', desc: '包含设备占用情况、会议信息' },
     { value: 'inspection', desc: '包含设备检查结果、通过率' },
     { value: 'fault', desc: '包含故障处理人、处理进度' },
+    { value: 'borrow', desc: '包含设备借调记录、来源/目标会议室' },
+    { value: 'fault_impact', desc: '包含故障影响范围、替代设备建议' },
     { value: 'comprehensive', desc: '包含以上所有内容及统计汇总' },
   ];
 
@@ -363,6 +433,30 @@ export default function ReportsPage() {
                   <li className="flex items-start gap-2">
                     <span className="w-1.5 h-1.5 rounded-full bg-blue-200 mt-1.5 flex-shrink-0" />
                     <span>故障上报/修复/关闭时间</span>
+                  </li>
+                </>
+              ) : null}
+              {form.type === 'borrow' || form.type === 'comprehensive' ? (
+                <>
+                  <li className="flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-200 mt-1.5 flex-shrink-0" />
+                    <span>设备借调记录（来源/目标/时间）</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-200 mt-1.5 flex-shrink-0" />
+                    <span>借调原因、审批人、状态</span>
+                  </li>
+                </>
+              ) : null}
+              {form.type === 'fault_impact' || form.type === 'comprehensive' ? (
+                <>
+                  <li className="flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-200 mt-1.5 flex-shrink-0" />
+                    <span>故障影响范围分析</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-200 mt-1.5 flex-shrink-0" />
+                    <span>受影响会议及替代设备建议</span>
                   </li>
                 </>
               ) : null}

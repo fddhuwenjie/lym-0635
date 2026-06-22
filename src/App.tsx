@@ -8,6 +8,7 @@ import Devices from '@/pages/Devices';
 import Inspections from '@/pages/Inspections';
 import Faults from '@/pages/Faults';
 import Reports from '@/pages/Reports';
+import Borrows from '@/pages/Borrows';
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
           <Route path="/devices" element={<Devices />} />
           <Route path="/inspections" element={<Inspections />} />
           <Route path="/faults" element={<Faults />} />
+          <Route path="/borrows" element={<Borrows />} />
           <Route path="/reports" element={<Reports />} />
         </Routes>
       </Layout>

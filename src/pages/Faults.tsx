@@ -17,6 +17,14 @@ import {
   ChevronDown,
   ChevronUp,
   Plus,
+  AlertCircle,
+  Building2,
+  Users,
+  ArrowRightLeft,
+  Projector,
+  Volume2,
+  DoorOpen,
+  Wifi,
 } from 'lucide-react';
 import {
   format,
@@ -26,6 +34,9 @@ import {
   FaultTicket,
   FaultStatus,
   FAULT_STATUS_LABELS,
+  DeviceType,
+  DEVICE_TYPE_LABELS,
+  FaultImpactAnalysis,
 } from '@/types';
 import { cn } from '@/lib/utils';
 
@@ -44,6 +55,13 @@ const statusVariant: Record<FaultStatus, 'warning' | 'info' | 'success' | 'defau
   closed: 'default',
 };
 
+const deviceTypeIcons: Record<DeviceType, typeof Projector> = {
+  projector: Projector,
+  speaker: Volume2,
+  access: DoorOpen,
+  network: Wifi,
+};
+
 export default function FaultsPage() {
   const {
     faults,
@@ -54,6 +72,7 @@ export default function FaultsPage() {
     fixFault,
     closeFault,
     createFault,
+    getFaultImpactAnalysis,
   } = useAppStore();
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -72,6 +91,9 @@ export default function FaultsPage() {
     reporter: '管理员',
     description: '',
   });
+
+  const [impactAnalysis, setImpactAnalysis] = useState<FaultImpactAnalysis | null>(null);
+  const [impactModalOpen, setImpactModalOpen] = useState(false);
 
   const filteredFaults = useMemo(() => {
     return faults
@@ -297,6 +319,19 @@ export default function FaultsPage() {
                     </div>
 
                     <div className="flex items-center gap-2 ml-4">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const analysis = getFaultImpactAnalysis(fault.id);
+                          setImpactAnalysis(analysis);
+                          setImpactModalOpen(true);
+                        }}
+                      >
+                        <AlertCircle size={14} />
+                        影响分析
+                      </Button>
                       {fault.status === 'open' && (
                         <Button
                           size="sm"
@@ -578,6 +613,136 @@ export default function FaultsPage() {
             </p>
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        open={impactModalOpen}
+        title="故障影响分析"
+        onClose={() => setImpactModalOpen(false)}
+        width="max-w-3xl"
+        footer={
+          <Button onClick={() => setImpactModalOpen(false)}>关闭</Button>
+        }
+      >
+        {impactAnalysis && (
+          <div className="space-y-6">
+            <div className="bg-rose-50 border border-rose-200 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle
+                  size={20}
+                  className="text-rose-500 mt-0.5 flex-shrink-0"
+                />
+                <div>
+                  <h4 className="font-semibold text-rose-800">
+                    故障设备：{impactAnalysis.deviceName}
+                  </h4>
+                  <p className="text-sm text-rose-600 mt-1">
+                    以下为受该故障影响的会议和替代设备建议
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
+                <Users size={16} className="text-slate-500" />
+                受影响的未来会议 ({impactAnalysis.affectedMeetings.length}场)
+              </h4>
+              {impactAnalysis.affectedMeetings.length > 0 ? (
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {impactAnalysis.affectedMeetings.map((m) => (
+                    <div
+                      key={m.meetingId}
+                      className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-lg"
+                    >
+                      <div>
+                        <p className="font-medium text-slate-800">
+                          {m.meetingTitle}
+                          {m.usesDevice && (
+                            <Badge variant="danger" className="ml-2">
+                              使用故障设备
+                            </Badge>
+                          )}
+                        </p>
+                        <p className="text-xs text-slate-500 mt-1">
+                          <Building2 size={12} className="inline mr-1" />
+                          {m.roomName} ·{' '}
+                          {format(parseISO(m.startTime), 'MM-dd HH:mm')} -{' '}
+                          {format(parseISO(m.endTime), 'HH:mm')} · {m.organizer}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center text-sm text-slate-500 py-6 bg-slate-50 rounded-lg">
+                  暂无受影响的会议
+                </div>
+              )}
+            </div>
+
+            <div>
+              <h4 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
+                <Building2 size={16} className="text-slate-500" />
+                受影响的会议室 ({impactAnalysis.affectedRooms.length}个)
+              </h4>
+              <div className="flex flex-wrap gap-2">
+                {impactAnalysis.affectedRooms.map((r) => (
+                  <Badge key={r.roomId} variant="warning">
+                    {r.roomName} · {r.meetingCount}场会议
+                  </Badge>
+                ))}
+                {impactAnalysis.affectedRooms.length === 0 && (
+                  <span className="text-sm text-slate-500">暂无受影响的会议室</span>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <h4 className="font-semibold text-slate-800 mb-3 flex items-center gap-2">
+                <ArrowRightLeft size={16} className="text-slate-500" />
+                可替代设备建议 ({impactAnalysis.alternativeDevices.length}台)
+              </h4>
+              {impactAnalysis.alternativeDevices.length > 0 ? (
+                <div className="grid grid-cols-2 gap-3">
+                  {impactAnalysis.alternativeDevices.map((d) => {
+                    const IconCmp = deviceTypeIcons[d.type];
+                    return (
+                      <div
+                        key={d.deviceId}
+                        className={cn(
+                          'flex items-center gap-3 p-3 border rounded-lg',
+                          d.available
+                            ? 'bg-emerald-50 border-emerald-200'
+                            : 'bg-amber-50 border-amber-200'
+                        )}
+                      >
+                        <div className="p-1.5 bg-white rounded">
+                          <IconCmp size={14} className="text-slate-600" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-slate-800">
+                            {d.deviceName}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            {d.roomName} · {DEVICE_TYPE_LABELS[d.type]}
+                          </p>
+                        </div>
+                        <Badge variant={d.available ? 'success' : 'warning'}>
+                          {d.available ? '可用' : '占用中'}
+                        </Badge>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center text-sm text-slate-500 py-6 bg-slate-50 rounded-lg">
+                  暂无可用的替代设备
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

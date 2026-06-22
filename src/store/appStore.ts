@@ -10,13 +10,18 @@ import {
   CheckItem,
   MeetingStatus,
   DeviceType,
+  BorrowRecord,
+  BorrowStatus,
+  FaultImpactAnalysis,
 } from '@/types';
 import { createInitialData, generateId } from '@/data/initialData';
 import {
+  addDays,
   areIntervalsOverlapping,
   format,
   parseISO,
   startOfToday,
+  isBefore,
 } from 'date-fns';
 
 interface AppState {
@@ -26,6 +31,7 @@ interface AppState {
   inspections: InspectionTask[];
   faults: FaultTicket[];
   exportRecords: ExportRecord[];
+  borrowRecords: BorrowRecord[];
 
   addRoom: (room: Omit<Room, 'id'>) => void;
   updateRoom: (id: string, room: Partial<Room>) => void;
@@ -36,7 +42,8 @@ interface AppState {
   deleteDevice: (id: string) => void;
 
   createMeeting: (
-    meeting: Omit<Meeting, 'id' | 'status'>
+    meeting: Omit<Meeting, 'id' | 'status'>,
+    borrowDevices?: { deviceId: string; reason: string; approver: string }[]
   ) => { success: boolean; error?: string };
   updateMeeting: (id: string, meeting: Partial<Meeting>) => void;
   cancelMeeting: (id: string) => { success: boolean; error?: string };
@@ -85,6 +92,33 @@ interface AppState {
     endTime: string,
     types?: DeviceType[]
   ) => Device[];
+  getBorrowableDevices: (
+    targetRoomId: string,
+    startTime: string,
+    endTime: string,
+    types?: DeviceType[]
+  ) => Device[];
+  isDeviceBorrowed: (
+    deviceId: string,
+    startTime: string,
+    endTime: string,
+    excludeMeetingId?: string
+  ) => boolean;
+  hasPendingReturnInspection: (deviceId: string) => boolean;
+
+  createBorrowRecord: (
+    data: Omit<BorrowRecord, 'id' | 'status' | 'createTime'>
+  ) => void;
+  updateBorrowRecord: (id: string, data: Partial<BorrowRecord>) => void;
+  completeBorrowReturn: (borrowId: string) => { success: boolean; error?: string };
+  cancelBorrow: (borrowId: string) => void;
+
+  createReturnInspection: (borrowId: string) => void;
+  completeReturnInspection: (
+    inspectionId: string
+  ) => { success: boolean; error?: string };
+
+  getFaultImpactAnalysis: (faultId: string) => FaultImpactAnalysis | null;
 
   addExportRecord: (record: Omit<ExportRecord, 'id' | 'generateTime'>) => void;
 }
@@ -140,6 +174,8 @@ export const useAppStore = create<AppState>()(
       isDeviceAvailable: (deviceId, startTime, endTime, excludeMeetingId) => {
         const state = get();
         if (state.isDeviceFaulty(deviceId)) return false;
+        if (state.isDeviceBorrowed(deviceId, startTime, endTime, excludeMeetingId)) return false;
+        if (state.hasPendingReturnInspection(deviceId)) return false;
 
         const start = parseISO(startTime);
         const end = parseISO(endTime);
@@ -161,6 +197,41 @@ export const useAppStore = create<AppState>()(
           }
         }
         return true;
+      },
+
+      isDeviceBorrowed: (deviceId, startTime, endTime, excludeMeetingId) => {
+        const state = get();
+        const start = parseISO(startTime);
+        const end = parseISO(endTime);
+
+        for (const borrow of state.borrowRecords) {
+          if (borrow.status === 'completed' || borrow.status === 'cancelled') continue;
+          if (excludeMeetingId && borrow.meetingId === excludeMeetingId) continue;
+
+          const bStart = parseISO(borrow.borrowStartTime);
+          const bEnd = parseISO(borrow.borrowEndTime);
+
+          if (areIntervalsOverlapping({ start, end }, { start: bStart, end: bEnd })) {
+            return true;
+          }
+        }
+        return false;
+      },
+
+      hasPendingReturnInspection: (deviceId) => {
+        const state = get();
+        return state.borrowRecords.some(
+          (b) => b.deviceId === deviceId && b.status === 'returning'
+        );
+      },
+
+      getBorrowableDevices: (targetRoomId, startTime, endTime, types) => {
+        const state = get();
+        return state.devices.filter((d) => {
+          if (d.roomId === targetRoomId) return false;
+          if (types && !types.includes(d.type)) return false;
+          return state.isDeviceAvailable(d.id, startTime, endTime);
+        });
       },
 
       isRoomAvailable: (roomId, startTime, endTime, excludeMeetingId) => {
@@ -196,7 +267,7 @@ export const useAppStore = create<AppState>()(
         });
       },
 
-      createMeeting: (meeting) => {
+      createMeeting: (meeting, borrowDevices = []) => {
         const state = get();
 
         if (!state.isRoomAvailable(meeting.roomId, meeting.startTime, meeting.endTime)) {
@@ -225,6 +296,52 @@ export const useAppStore = create<AppState>()(
           id: generateId(),
           status: 'scheduled',
         };
+
+        const targetRoom = state.rooms.find((r) => r.id === meeting.roomId);
+
+        for (const borrowInfo of borrowDevices) {
+          const device = state.devices.find((d) => d.id === borrowInfo.deviceId);
+          const sourceRoom = device ? state.rooms.find((r) => r.id === device.roomId) : null;
+          
+          if (!device || !sourceRoom) continue;
+
+          if (state.isDeviceBorrowed(borrowInfo.deviceId, meeting.startTime, meeting.endTime)) {
+            return {
+              success: false,
+              error: `设备"${device.name}"在所选时间段已被借调`,
+            };
+          }
+
+          if (state.hasPendingReturnInspection(borrowInfo.deviceId)) {
+            return {
+              success: false,
+              error: `设备"${device.name}"待归还检查，不可借出`,
+            };
+          }
+
+          const borrowRecord: BorrowRecord = {
+            id: generateId(),
+            deviceId: device.id,
+            deviceName: device.name,
+            sourceRoomId: sourceRoom.id,
+            sourceRoomName: sourceRoom.name,
+            targetRoomId: meeting.roomId,
+            targetRoomName: targetRoom?.name || '未知会议室',
+            meetingId: newMeeting.id,
+            meetingTitle: meeting.title,
+            reason: borrowInfo.reason,
+            expectedReturnTime: meeting.endTime,
+            approver: borrowInfo.approver,
+            status: 'active',
+            createTime: format(new Date(), "yyyy-MM-dd'T'HH:mm:ss"),
+            borrowStartTime: meeting.startTime,
+            borrowEndTime: meeting.endTime,
+          };
+
+          set((s) => ({
+            borrowRecords: [...s.borrowRecords, borrowRecord],
+          }));
+        }
 
         set((s) => ({
           meetings: [...s.meetings, newMeeting],
@@ -290,14 +407,29 @@ export const useAppStore = create<AppState>()(
         return { success: true };
       },
 
-      endMeeting: (id, data) =>
+      endMeeting: (id, data) => {
+        const state = get();
+        const meeting = state.meetings.find((m) => m.id === id);
+        
         set((s) => ({
           meetings: s.meetings.map((m) =>
             m.id === id
               ? { ...m, status: 'completed' as MeetingStatus, ...data }
               : m
           ),
-        })),
+        }));
+
+        if (meeting) {
+          const borrowRecords = state.borrowRecords.filter(
+            (b) => b.meetingId === id && b.status === 'active'
+          );
+          
+          borrowRecords.forEach((borrow) => {
+            get().updateBorrowRecord(borrow.id, { status: 'returning' });
+            get().createReturnInspection(borrow.id);
+          });
+        }
+      },
 
       changeMeetingRoom: (meetingId, newRoomId) => {
         const state = get();
@@ -544,6 +676,201 @@ export const useAppStore = create<AppState>()(
         }));
       },
 
+      createBorrowRecord: (data) => {
+        const newRecord: BorrowRecord = {
+          ...data,
+          id: generateId(),
+          status: 'active',
+          createTime: format(new Date(), "yyyy-MM-dd'T'HH:mm:ss"),
+        };
+        set((s) => ({
+          borrowRecords: [...s.borrowRecords, newRecord],
+        }));
+      },
+
+      updateBorrowRecord: (id, data) =>
+        set((state) => ({
+          borrowRecords: state.borrowRecords.map((b) =>
+            b.id === id ? { ...b, ...data } : b
+          ),
+        })),
+
+      completeBorrowReturn: (borrowId) => {
+        const state = get();
+        const borrow = state.borrowRecords.find((b) => b.id === borrowId);
+        if (!borrow) return { success: false, error: '借调记录不存在' };
+        if (borrow.status !== 'returning') {
+          return { success: false, error: '该借调设备不在待归还状态' };
+        }
+
+        set((s) => ({
+          borrowRecords: s.borrowRecords.map((b) =>
+            b.id === borrowId
+              ? {
+                  ...b,
+                  status: 'completed',
+                  actualReturnTime: format(new Date(), "yyyy-MM-dd'T'HH:mm:ss"),
+                }
+              : b
+          ),
+        }));
+
+        return { success: true };
+      },
+
+      cancelBorrow: (borrowId) => {
+        const state = get();
+        const borrow = state.borrowRecords.find((b) => b.id === borrowId);
+        if (!borrow || borrow.status !== 'active') return;
+
+        set((s) => ({
+          borrowRecords: s.borrowRecords.map((b) =>
+            b.id === borrowId ? { ...b, status: 'cancelled' } : b
+          ),
+        }));
+      },
+
+      createReturnInspection: (borrowId) => {
+        const state = get();
+        const borrow = state.borrowRecords.find((b) => b.id === borrowId);
+        if (!borrow) return;
+
+        const existing = state.inspections.find(
+          (i) => i.meetingId === `return-${borrowId}`
+        );
+        if (existing) return;
+
+        const checkItems: CheckItem[] = [
+          {
+            deviceId: borrow.deviceId,
+            deviceName: borrow.deviceName,
+            checked: false,
+            normal: true,
+          },
+        ];
+
+        const inspection: InspectionTask = {
+          id: generateId(),
+          meetingId: `return-${borrowId}`,
+          deviceIds: [borrow.deviceId],
+          inspector: '管理员',
+          status: 'pending',
+          startTime: format(new Date(), "yyyy-MM-dd'T'HH:mm:ss"),
+          checkItems,
+        };
+
+        set((s) => ({
+          inspections: [...s.inspections, inspection],
+        }));
+      },
+
+      completeReturnInspection: (inspectionId) => {
+        const state = get();
+        const inspection = state.inspections.find(
+          (i) => i.id === inspectionId
+        );
+        if (!inspection) return { success: false, error: '检查任务不存在' };
+
+        const borrowId = inspection.meetingId.replace('return-', '');
+        const borrow = state.borrowRecords.find((b) => b.id === borrowId);
+        if (!borrow) return { success: false, error: '借调记录不存在' };
+
+        const result = state.completeInspection(inspectionId);
+        if (!result.success) return result;
+
+        if (inspection.status === 'completed') {
+          return state.completeBorrowReturn(borrowId);
+        }
+
+        return { success: true };
+      },
+
+      getFaultImpactAnalysis: (faultId) => {
+        const state = get();
+        const fault = state.faults.find((f) => f.id === faultId);
+        if (!fault) return null;
+
+        const device = state.devices.find((d) => d.id === fault.deviceId);
+        if (!device) return null;
+
+        const now = new Date();
+        const affectedMeetings: FaultImpactAnalysis['affectedMeetings'] = [];
+        const roomMeetingMap = new Map<string, number>();
+
+        for (const meeting of state.meetings) {
+          if (
+            meeting.status !== 'scheduled' &&
+            meeting.status !== 'in_progress'
+          )
+            continue;
+
+          const meetingStart = parseISO(meeting.startTime);
+          if (isBefore(meetingStart, now)) continue;
+
+          const usesDevice = meeting.deviceIds.includes(device.id);
+          
+          if (usesDevice || meeting.roomId === device.roomId) {
+            const room = state.rooms.find((r) => r.id === meeting.roomId);
+            affectedMeetings.push({
+              meetingId: meeting.id,
+              meetingTitle: meeting.title,
+              roomId: meeting.roomId,
+              roomName: room?.name || '未知',
+              startTime: meeting.startTime,
+              endTime: meeting.endTime,
+              organizer: meeting.organizer,
+              usesDevice,
+            });
+
+            const count = roomMeetingMap.get(meeting.roomId) || 0;
+            roomMeetingMap.set(meeting.roomId, count + 1);
+          }
+        }
+
+        const affectedRooms: FaultImpactAnalysis['affectedRooms'] = [];
+        roomMeetingMap.forEach((meetingCount, roomId) => {
+          const room = state.rooms.find((r) => r.id === roomId);
+          if (room) {
+            affectedRooms.push({
+              roomId: room.id,
+              roomName: room.name,
+              meetingCount,
+            });
+          }
+        });
+
+        const alternativeDevices: FaultImpactAnalysis['alternativeDevices'] = [];
+        for (const d of state.devices) {
+          if (d.id === device.id) continue;
+          if (d.type !== device.type) continue;
+          if (d.status !== 'normal') continue;
+          if (state.isDeviceFaulty(d.id)) continue;
+
+          const room = state.rooms.find((r) => r.id === d.roomId);
+          alternativeDevices.push({
+            deviceId: d.id,
+            deviceName: d.name,
+            roomId: d.roomId,
+            roomName: room?.name || '未知',
+            type: d.type,
+            available: !state.isDeviceBorrowed(
+              d.id,
+              format(now, "yyyy-MM-dd'T'HH:mm:ss"),
+              format(addDays(now, 7), "yyyy-MM-dd'T'HH:mm:ss")
+            ),
+          });
+        }
+
+        return {
+          faultId,
+          deviceId: device.id,
+          deviceName: device.name,
+          affectedMeetings,
+          affectedRooms,
+          alternativeDevices,
+        };
+      },
+
       addExportRecord: (record) =>
         set((state) => ({
           exportRecords: [
@@ -565,6 +892,7 @@ export const useAppStore = create<AppState>()(
         inspections: state.inspections,
         faults: state.faults,
         exportRecords: state.exportRecords,
+        borrowRecords: state.borrowRecords,
       }),
     }
   )

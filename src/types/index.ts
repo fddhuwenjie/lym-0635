@@ -70,7 +70,58 @@ export interface FaultTicket {
   closeTime?: string;
 }
 
-export type ExportType = 'device_usage' | 'inspection' | 'fault' | 'comprehensive';
+export type BorrowStatus = 'active' | 'returning' | 'completed' | 'cancelled';
+
+export interface BorrowRecord {
+  id: string;
+  deviceId: string;
+  deviceName: string;
+  sourceRoomId: string;
+  sourceRoomName: string;
+  targetRoomId: string;
+  targetRoomName: string;
+  meetingId: string;
+  meetingTitle: string;
+  reason: string;
+  expectedReturnTime: string;
+  actualReturnTime?: string;
+  approver: string;
+  status: BorrowStatus;
+  createTime: string;
+  borrowStartTime: string;
+  borrowEndTime: string;
+}
+
+export interface FaultImpactAnalysis {
+  faultId: string;
+  deviceId: string;
+  deviceName: string;
+  affectedMeetings: {
+    meetingId: string;
+    meetingTitle: string;
+    roomId: string;
+    roomName: string;
+    startTime: string;
+    endTime: string;
+    organizer: string;
+    usesDevice: boolean;
+  }[];
+  affectedRooms: {
+    roomId: string;
+    roomName: string;
+    meetingCount: number;
+  }[];
+  alternativeDevices: {
+    deviceId: string;
+    deviceName: string;
+    roomId: string;
+    roomName: string;
+    type: DeviceType;
+    available: boolean;
+  }[];
+}
+
+export type ExportType = 'device_usage' | 'inspection' | 'fault' | 'comprehensive' | 'borrow' | 'fault_impact';
 
 export interface ExportRecord {
   id: string;
@@ -116,9 +167,18 @@ export const FAULT_STATUS_LABELS: Record<FaultStatus, string> = {
   closed: '已关闭',
 };
 
+export const BORROW_STATUS_LABELS: Record<BorrowStatus, string> = {
+  active: '借调中',
+  returning: '待归还检查',
+  completed: '已归还',
+  cancelled: '已取消',
+};
+
 export const EXPORT_TYPE_LABELS: Record<ExportType, string> = {
   device_usage: '设备占用报告',
   inspection: '设备检查报告',
   fault: '故障处理报告',
   comprehensive: '综合报告',
+  borrow: '设备借调报告',
+  fault_impact: '故障影响分析报告',
 };
