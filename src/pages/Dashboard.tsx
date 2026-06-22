@@ -16,7 +16,7 @@ import {
   Clock,
 } from 'lucide-react';
 import { DeviceType, DEVICE_TYPE_LABELS, MEETING_STATUS_LABELS } from '@/types';
-import { format, parseISO, isToday, isBefore, startOfToday } from 'date-fns';
+import { format, parseISO, isToday } from 'date-fns';
 import { cn } from '@/lib/utils';
 
 const deviceTypeIcons: Record<DeviceType, typeof Projector> = {
@@ -61,7 +61,6 @@ export default function DashboardPage() {
 
   const todayMeetings = useMemo(() => {
     if (!selectedRoomId) return [];
-    const today = startOfToday();
     return meetings
       .filter(
         (m) =>

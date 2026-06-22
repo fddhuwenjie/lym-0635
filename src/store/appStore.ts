@@ -11,7 +11,6 @@ import {
   MeetingStatus,
   DeviceType,
   BorrowRecord,
-  BorrowStatus,
   FaultImpactAnalysis,
 } from '@/types';
 import { createInitialData, generateId } from '@/data/initialData';
@@ -20,7 +19,6 @@ import {
   areIntervalsOverlapping,
   format,
   parseISO,
-  startOfToday,
   isBefore,
 } from 'date-fns';
 
@@ -104,7 +102,10 @@ interface AppState {
     endTime: string,
     excludeMeetingId?: string
   ) => boolean;
-  hasPendingReturnInspection: (deviceId: string) => boolean;
+  hasPendingReturnInspection: (
+    deviceId: string,
+    excludeMeetingId?: string
+  ) => boolean;
 
   createBorrowRecord: (
     data: Omit<BorrowRecord, 'id' | 'status' | 'createTime'>
@@ -175,7 +176,7 @@ export const useAppStore = create<AppState>()(
         const state = get();
         if (state.isDeviceFaulty(deviceId)) return false;
         if (state.isDeviceBorrowed(deviceId, startTime, endTime, excludeMeetingId)) return false;
-        if (state.hasPendingReturnInspection(deviceId)) return false;
+        if (state.hasPendingReturnInspection(deviceId, excludeMeetingId)) return false;
 
         const start = parseISO(startTime);
         const end = parseISO(endTime);
@@ -205,6 +206,7 @@ export const useAppStore = create<AppState>()(
         const end = parseISO(endTime);
 
         for (const borrow of state.borrowRecords) {
+          if (borrow.deviceId !== deviceId) continue;
           if (borrow.status === 'completed' || borrow.status === 'cancelled') continue;
           if (excludeMeetingId && borrow.meetingId === excludeMeetingId) continue;
 
@@ -218,10 +220,13 @@ export const useAppStore = create<AppState>()(
         return false;
       },
 
-      hasPendingReturnInspection: (deviceId) => {
+      hasPendingReturnInspection: (deviceId, excludeMeetingId) => {
         const state = get();
         return state.borrowRecords.some(
-          (b) => b.deviceId === deviceId && b.status === 'returning'
+          (b) =>
+            b.deviceId === deviceId &&
+            b.status === 'returning' &&
+            (!excludeMeetingId || b.meetingId !== excludeMeetingId)
         );
       },
 
@@ -371,6 +376,11 @@ export const useAppStore = create<AppState>()(
         set((s) => ({
           meetings: s.meetings.map((m) =>
             m.id === id ? { ...m, status: 'cancelled' as MeetingStatus } : m
+          ),
+          borrowRecords: s.borrowRecords.map((b) =>
+            b.meetingId === id && b.status === 'active'
+              ? { ...b, status: 'cancelled' }
+              : b
           ),
         }));
 
@@ -574,10 +584,18 @@ export const useAppStore = create<AppState>()(
           (item) => !item.normal
         );
 
+        const isReturnInspection = inspection.meetingId.startsWith('return-');
+        let realMeetingId = inspection.meetingId;
+        if (isReturnInspection) {
+          const borrowId = inspection.meetingId.replace('return-', '');
+          const borrow = state.borrowRecords.find((b) => b.id === borrowId);
+          if (borrow) realMeetingId = borrow.meetingId;
+        }
+
         abnormal.forEach((item) => {
           get().createFault({
             deviceId: item.deviceId,
-            meetingId: inspection.meetingId,
+            meetingId: realMeetingId,
             reporter: inspection.inspector,
             description:
               item.remark || `设备"${item.deviceName}"检查发现异常`,
@@ -774,15 +792,14 @@ export const useAppStore = create<AppState>()(
         const borrowId = inspection.meetingId.replace('return-', '');
         const borrow = state.borrowRecords.find((b) => b.id === borrowId);
         if (!borrow) return { success: false, error: '借调记录不存在' };
+        if (borrow.status !== 'returning') {
+          return { success: false, error: '该借调设备不在待归还状态' };
+        }
 
         const result = state.completeInspection(inspectionId);
         if (!result.success) return result;
 
-        if (inspection.status === 'completed') {
-          return state.completeBorrowReturn(borrowId);
-        }
-
-        return { success: true };
+        return get().completeBorrowReturn(borrowId);
       },
 
       getFaultImpactAnalysis: (faultId) => {

@@ -61,7 +61,6 @@ export default function BorrowsPage() {
   const {
     borrowRecords,
     devices,
-    meetings,
     rooms,
     cancelBorrow,
   } = useAppStore();
@@ -185,7 +184,6 @@ export default function BorrowsPage() {
         <div className="divide-y divide-slate-200">
           {filteredBorrows.map((borrow) => {
             const device = devices.find((d) => d.id === borrow.deviceId);
-            const meeting = meetings.find((m) => m.id === borrow.meetingId);
             const sourceRoom = rooms.find((r) => r.id === borrow.sourceRoomId);
             const targetRoom = rooms.find((r) => r.id === borrow.targetRoomId);
             const expanded = expandedId === borrow.id;

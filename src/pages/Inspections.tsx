@@ -21,9 +21,6 @@ import {
 import {
   format,
   parseISO,
-  isToday,
-  isBefore,
-  startOfToday,
 } from 'date-fns';
 import {
   InspectionTask,
@@ -46,7 +43,6 @@ export default function InspectionsPage() {
     inspections,
     meetings,
     rooms,
-    devices,
     borrowRecords,
     updateInspectionCheckItem,
     completeInspection,
@@ -318,9 +314,6 @@ export default function InspectionsPage() {
                   <div className="px-4 pb-4 pt-0">
                     <div className="bg-slate-50 rounded-lg p-4 space-y-3">
                       {inspection.checkItems.map((item) => {
-                        const device = devices.find(
-                          (d) => d.id === item.deviceId
-                        );
                         return (
                           <div
                             key={item.deviceId}
@@ -493,13 +486,14 @@ export default function InspectionsPage() {
                         size="sm"
                         variant="danger"
                         onClick={() => {
-                          const meeting = meetings.find(
-                            (m) => m.id === executeModal.meetingId
-                          );
+                          const isReturnInspection = executeModal.meetingId.startsWith('return-');
+                          const borrowId = isReturnInspection ? executeModal.meetingId.replace('return-', '') : null;
+                          const borrow = borrowId ? borrowRecords.find((b) => b.id === borrowId) : null;
+                          const realMeetingId = isReturnInspection ? borrow?.meetingId : executeModal.meetingId;
                           setFaultModal({
                             deviceId: item.deviceId,
                             deviceName: item.deviceName,
-                            meetingId: meeting?.id,
+                            meetingId: realMeetingId,
                           });
                           setFaultDesc(item.remark || '');
                         }}

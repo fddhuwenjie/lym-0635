@@ -12,7 +12,6 @@ import {
   Clock,
   Wrench,
   CheckCircle2,
-  XCircle,
   FileText,
   ChevronDown,
   ChevronUp,
